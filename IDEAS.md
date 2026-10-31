@@ -145,6 +145,7 @@ Questions worth revisiting when the relevant implementation work begins:
 - Should the language support garbage collection?
 - Should compilation to native code eventually be explored?
 - How should dependencies be distributed?
+- Should we use buffered io for reading source text or just keep all source text in memory for the duration of the interpreter session? For multi-file projects, the source could consume memory that would otherwise be released back to the OS.
 
 ---
 
