@@ -50,22 +50,57 @@ pub const SourceManager = struct {
 
     /// Adds a source file and returns its ID.
     ///
-    /// The manager stores copies of `name` and `contents`. The caller retains
-    /// ownership of the original slices.
+    /// The source manager stores copies of `name` and `contents`.
+    /// The caller retains ownership of the original slices.
     pub fn addSource(
         self: *SourceManager,
         name: []const u8,
         contents: []const u8,
     ) !SourceId {
         const owned_contents = try self.allocator.dupe(u8, contents);
-        errdefer self.allocator.free(owned_contents);
+        return self.addOwnedSource(name, owned_contents);
+    }
+
+    /// Registers a source file, taking ownership of `contents`.
+    ///
+    /// The source manager also stores its own copy of `name`.
+    fn addOwnedSource(
+        self: *SourceManager,
+        name: []const u8,
+        contents: []u8,
+    ) !SourceId {
+        errdefer self.allocator.free(contents);
+
         const owned_name = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_name);
+
         const id = SourceId.init(self.sources.items.len);
-        const file = SourceCodeFile.init(id, owned_name, owned_contents);
+        const file = SourceCodeFile.init(id, owned_name, contents);
+
         const pointer = try self.sources.addOne(self.allocator);
         pointer.* = file;
+
         return id;
+    }
+
+    /// Loads a source file from a directory and returns its ID.
+    ///
+    /// The source manager takes ownership of the file contents and a copy
+    /// of the path.
+    pub fn loadSource(
+        self: *SourceManager,
+        io: std.Io,
+        dir: std.Io.Dir,
+        path: []const u8,
+    ) !SourceId {
+        const contents = try dir.readFileAlloc(
+            io,
+            path,
+            self.allocator,
+            .unlimited,
+        );
+
+        return self.addOwnedSource(path, contents);
     }
 
     /// Releases all memory owned by the source manager.
@@ -167,4 +202,74 @@ test "SourceManager.addSource assigns distinct IDs" {
     try std.testing.expectEqual(2, third.value);
 
     try std.testing.expectEqual(@as(usize, 3), manager.sources.items.len);
+}
+
+test "SourceManager.loadSource loads a file" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const expected_contents = "var x = 42;";
+
+    try tmp_dir.dir.writeFile(io, .{
+        .sub_path = "test.todo",
+        .data = expected_contents,
+    });
+
+    var manager = SourceManager.init(allocator);
+    defer manager.deinit();
+
+    const id = try manager.loadSource(io, tmp_dir.dir, "test.todo");
+
+    try std.testing.expectEqual(0, id.value);
+    try std.testing.expectEqual(1, manager.sources.items.len);
+
+    const source = manager.sources.items[id.value];
+
+    try std.testing.expectEqualStrings("test.todo", source.name);
+    try std.testing.expectEqualStrings(expected_contents, source.contents);
+}
+
+test "SourceManager.loadSource accepts empty files" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile(io, .{
+        .sub_path = "empty.todo",
+        .data = "",
+    });
+
+    var manager = SourceManager.init(allocator);
+    defer manager.deinit();
+
+    const id = try manager.loadSource(io, tmp_dir.dir, "empty.todo");
+
+    const source = manager.sources.items[id.value];
+
+    try std.testing.expectEqual(0, id.value);
+    try std.testing.expectEqualStrings("empty.todo", source.name);
+    try std.testing.expectEqualStrings("", source.contents);
+}
+
+test "SourceManager.loadSource handles missing files" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var manager = SourceManager.init(allocator);
+    defer manager.deinit();
+
+    try std.testing.expectError(
+        error.FileNotFound,
+        manager.loadSource(io, tmp_dir.dir, "missing.todo"),
+    );
+
+    try std.testing.expectEqual(0, manager.sources.items.len);
 }
