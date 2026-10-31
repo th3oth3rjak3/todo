@@ -60,6 +60,12 @@ Unresolved ideas belong in `IDEAS.md`.
 
 ---
 
+### D008 — Runtime memory management
+
+**Decision:** Start with interpreter-lifetime allocation for runtime objects, intentionally deferring individual reclamation. (Yep, it's gonna get chonky) Implement a tracing garbage collector later, following the approach in Crafting Interpreters.
+
+**Reason:** Implementing a garbage collector on day one is a mistake because we don't know what the language needs yet.
+
 ## Future decisions
 
 Add new decisions as they are made.

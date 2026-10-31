@@ -118,6 +118,22 @@ This library could initially be developed alongside `todo` and extracted into it
 
 ---
 
+### Backend-independent intermediate representation
+
+Explore whether `todo` should use an intermediate representation (IR) between the frontend and execution backends, rather than having backends consume the AST directly.
+
+Potential benefits:
+- Multiple execution backends can share a common representation.
+- A tree-walking interpreter and bytecode VM could consume or lower from the same IR.
+- The frontend remains independent of execution strategy.
+
+Open questions:
+- Should the IR be tree-based, control-flow-based, stack-based, or register-based?
+- Should all backends consume one canonical IR, or have backend-specific lowering stages?
+- Is an IR worthwhile initially, or should the project start with an AST?
+
+**Status:** Idea only. No architectural decision made.
+
 ## Open questions
 
 Questions worth revisiting when the relevant implementation work begins:
