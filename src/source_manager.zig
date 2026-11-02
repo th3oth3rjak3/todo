@@ -1,33 +1,30 @@
 const std = @import("std");
-
-/// Identifies a source file managed by `SourceManager`.
-pub const SourceId = struct {
-    value: usize,
-
-    /// Returns a source ID with the given value.
-    pub fn init(value: usize) SourceId {
-        return .{ .value = value };
-    }
-};
+const diag = @import("diagnostics");
+const traits = @import("traits");
+const Source = diag.Source;
+const SourceProvider = diag.SourceProvider(usize);
+const SourceId = diag.SourceId(usize);
 
 /// A source file registered with a `SourceManager`.
+/// `SourceManager` owns the heap data.
 pub const SourceCodeFile = struct {
     /// The source file's ID.
     id: SourceId,
-    /// The source file's name.
-    name: []const u8,
+
+    /// The source file's relative path from the manager's root directory.
+    relative_path: []const u8,
+
     /// The source file's contents.
     contents: []const u8,
 
-    /// Initializes a source file with the given ID, name, and contents.
     pub fn init(
         id: SourceId,
-        name: []const u8,
+        relative_path: []const u8,
         contents: []const u8,
     ) SourceCodeFile {
         return .{
             .id = id,
-            .name = name,
+            .relative_path = relative_path,
             .contents = contents,
         };
     }
@@ -35,78 +32,103 @@ pub const SourceCodeFile = struct {
 
 /// Stores source files and assigns each one a unique ID.
 pub const SourceManager = struct {
-    /// The allocator used for source data and storage.
     allocator: std.mem.Allocator,
-    /// The source files registered with this manager.
+    root_path: []const u8,
     sources: std.ArrayList(SourceCodeFile),
 
-    /// Initializes an empty source manager.
-    pub fn init(allocator: std.mem.Allocator) SourceManager {
+    const Self = @This();
+
+    /// Initializes a source manager with a root directory.
+    pub fn init(
+        allocator: std.mem.Allocator,
+        root_path: []const u8,
+    ) !Self {
+        const owned_root_path = try allocator.dupe(u8, root_path);
+
         return .{
             .allocator = allocator,
+            .root_path = owned_root_path,
             .sources = .empty,
         };
     }
 
-    /// Adds a source file and returns its ID.
-    ///
-    /// The source manager stores copies of `name` and `contents`.
-    /// The caller retains ownership of the original slices.
-    pub fn addSource(
-        self: *SourceManager,
-        name: []const u8,
-        contents: []const u8,
+    /// Loads a source file relative to the manager's root directory.
+    pub fn loadSource(
+        self: *Self,
+        io: std.Io,
+        relative_path: []const u8,
     ) !SourceId {
-        const owned_contents = try self.allocator.dupe(u8, contents);
-        return self.addOwnedSource(name, owned_contents);
-    }
+        var root_dir = try std.Io.Dir.openDirAbsolute(
+            io,
+            self.root_path,
+            .{},
+        );
+        defer root_dir.close(io);
 
-    /// Registers a source file, taking ownership of `contents`.
-    ///
-    /// The source manager also stores its own copy of `name`.
-    fn addOwnedSource(
-        self: *SourceManager,
-        name: []const u8,
-        contents: []u8,
-    ) !SourceId {
-        errdefer self.allocator.free(contents);
+        const owned_contents = try root_dir.readFileAlloc(
+            io,
+            relative_path,
+            self.allocator,
+            .unlimited,
+        );
+        errdefer self.allocator.free(owned_contents);
 
-        const owned_name = try self.allocator.dupe(u8, name);
-        errdefer self.allocator.free(owned_name);
+        const owned_path = try self.allocator.dupe(u8, relative_path);
+        errdefer self.allocator.free(owned_path);
 
         const id = SourceId.init(self.sources.items.len);
-        const file = SourceCodeFile.init(id, owned_name, contents);
 
-        const pointer = try self.sources.addOne(self.allocator);
-        pointer.* = file;
+        const source = SourceCodeFile.init(
+            id,
+            owned_path,
+            owned_contents,
+        );
+
+        const slot = try self.sources.addOne(self.allocator);
+        slot.* = source;
 
         return id;
     }
 
-    /// Loads a source file from a directory and returns its ID.
-    ///
-    /// The source manager takes ownership of the file contents and a copy
-    /// of the path.
-    pub fn loadSource(
-        self: *SourceManager,
-        io: std.Io,
-        dir: std.Io.Dir,
-        path: []const u8,
-    ) !SourceId {
-        const contents = try dir.readFileAlloc(
-            io,
-            path,
-            self.allocator,
-            .unlimited,
-        );
+    /// Returns a registered source file by ID.
+    pub fn getSourceFile(
+        self: *const Self,
+        id: SourceId,
+    ) ?SourceCodeFile {
+        if (id.raw >= self.sources.items.len) return null;
+        return self.sources.items[id.raw];
+    }
 
-        return self.addOwnedSource(path, contents);
+    /// Construct a SourceProvider interface for this manager.
+    pub fn sourceProvider(self: *const Self) SourceProvider {
+        return .{ .ptr = self, .getSourceFn = getSource };
+    }
+
+    /// The source converter that's used to convert SourceCodeFile to Source
+    /// for a diagnostic writer.
+    const source_converter = traits.impl(traits.Convert(SourceCodeFile, Source), struct {
+        pub fn convert(input: SourceCodeFile) Source {
+            return .{
+                .path = input.relative_path,
+                .text = input.contents,
+            };
+        }
+    });
+
+    /// Get the source file for the trait implementation.
+    fn getSource(self: *const anyopaque, id: SourceId) ?Source {
+        const typed_self: *const Self = @ptrCast(@alignCast(self));
+        const result = typed_self.getSourceFile(id);
+        if (result == null) return null;
+        return source_converter.convert(result.?);
     }
 
     /// Releases all memory owned by the source manager.
-    pub fn deinit(self: *SourceManager) void {
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.root_path);
+
         for (self.sources.items) |source| {
-            self.allocator.free(source.name);
+            self.allocator.free(source.relative_path);
             self.allocator.free(source.contents);
         }
 
@@ -114,162 +136,210 @@ pub const SourceManager = struct {
     }
 };
 
-test "SourceManager creates a new source" {
-    const allocator = std.testing.allocator;
-
-    var manager = SourceManager.init(allocator);
-    defer manager.deinit();
-
-    const temp_name = try allocator.dupe(u8, "test.todo");
-    defer allocator.free(temp_name);
-
-    const temp_contents = try allocator.dupe(u8, "var x = 1;");
-    defer allocator.free(temp_contents);
-
-    const id = try manager.addSource(temp_name, temp_contents);
-    try std.testing.expectEqual(0, id.value);
-    try std.testing.expectEqual(1, manager.sources.items.len);
-}
-
-test "SourceManager.addSource handles allocation failures" {
-    for (0..3) |fail_index| {
-        var failing_allocator = std.testing.FailingAllocator.init(
-            std.testing.allocator,
-            .{ .fail_index = fail_index },
-        );
-
-        var manager = SourceManager.init(failing_allocator.allocator());
-        defer manager.deinit();
-
-        try std.testing.expectError(
-            error.OutOfMemory,
-            manager.addSource("test.todo", "var x = 1;"),
-        );
-
-        try std.testing.expectEqual(0, manager.sources.items.len);
-    }
-}
-
-test "SourceManager.addSource copies source name and contents" {
-    const allocator = std.testing.allocator;
-
-    var manager = SourceManager.init(allocator);
-    defer manager.deinit();
-
-    const name = try allocator.dupe(u8, "test.todo");
-    defer allocator.free(name);
-
-    const contents = try allocator.dupe(u8, "var x = 1;");
-    defer allocator.free(contents);
-
-    const id = try manager.addSource(name, contents);
-
-    // Mutate the caller-owned buffers.
-    @memset(name, 'x');
-    @memset(contents, 'x');
-
-    const source = manager.sources.items[id.value];
-
-    try std.testing.expectEqualStrings("test.todo", source.name);
-    try std.testing.expectEqualStrings("var x = 1;", source.contents);
-}
-
-test "SourceManager.addSource accepts empty slices" {
-    const allocator = std.testing.allocator;
-
-    var manager = SourceManager.init(allocator);
-    defer manager.deinit();
-
-    const id = try manager.addSource("", "");
-
-    const source = manager.sources.items[id.value];
-    try std.testing.expectEqualStrings("", source.name);
-    try std.testing.expectEqualStrings("", source.contents);
-}
-
-test "SourceManager.addSource assigns distinct IDs" {
-    const allocator = std.testing.allocator;
-
-    var manager = SourceManager.init(allocator);
-    defer manager.deinit();
-
-    const first = try manager.addSource("first.todo", "var x = 1;");
-    const second = try manager.addSource("second.todo", "var y = 2;");
-    const third = try manager.addSource("third.todo", "var z = 3;");
-
-    try std.testing.expectEqual(0, first.value);
-    try std.testing.expectEqual(1, second.value);
-    try std.testing.expectEqual(2, third.value);
-
-    try std.testing.expectEqual(@as(usize, 3), manager.sources.items.len);
-}
-
-test "SourceManager.loadSource loads a file" {
+test "load a source file" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    const expected_contents = "var x = 42;";
-
-    try tmp_dir.dir.writeFile(io, .{
-        .sub_path = "test.todo",
-        .data = expected_contents,
+    // Create the test file.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "main.zig",
+        .data = "const answer = 42;",
     });
 
-    var manager = SourceManager.init(allocator);
+    // Get the absolute path to the temporary directory.
+    const root_path = try tmp.parent_dir.realPathFileAlloc(
+        io,
+        &tmp.sub_path,
+        allocator,
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
     defer manager.deinit();
 
-    const id = try manager.loadSource(io, tmp_dir.dir, "test.todo");
+    const id = try manager.loadSource(io, "main.zig");
 
-    try std.testing.expectEqual(0, id.value);
-    try std.testing.expectEqual(1, manager.sources.items.len);
+    const source = manager.getSourceFile(id).?;
 
-    const source = manager.sources.items[id.value];
-
-    try std.testing.expectEqualStrings("test.todo", source.name);
-    try std.testing.expectEqualStrings(expected_contents, source.contents);
+    try std.testing.expectEqualStrings("main.zig", source.relative_path);
+    try std.testing.expectEqualStrings("const answer = 42;", source.contents);
 }
 
-test "SourceManager.loadSource accepts empty files" {
+test "load multiple source files" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    try tmp_dir.dir.writeFile(io, .{
-        .sub_path = "empty.todo",
-        .data = "",
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "main.zig",
+        .data = "pub fn main() void {}",
     });
 
-    var manager = SourceManager.init(allocator);
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "parser.zig",
+        .data = "pub const Parser = struct {};",
+    });
+
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+
+    const root_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.zig-cache/tmp/{s}",
+        .{ cwd, &tmp.sub_path },
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
     defer manager.deinit();
 
-    const id = try manager.loadSource(io, tmp_dir.dir, "empty.todo");
+    const main_id = try manager.loadSource(io, "main.zig");
+    const parser_id = try manager.loadSource(io, "parser.zig");
 
-    const source = manager.sources.items[id.value];
+    try std.testing.expectEqual(@as(usize, 0), main_id.raw);
+    try std.testing.expectEqual(@as(usize, 1), parser_id.raw);
 
-    try std.testing.expectEqual(0, id.value);
-    try std.testing.expectEqualStrings("empty.todo", source.name);
-    try std.testing.expectEqualStrings("", source.contents);
+    const main_source = manager.getSourceFile(main_id).?;
+    const parser_source = manager.getSourceFile(parser_id).?;
+
+    try std.testing.expectEqualStrings("main.zig", main_source.relative_path);
+    try std.testing.expectEqualStrings(
+        "pub fn main() void {}",
+        main_source.contents,
+    );
+
+    try std.testing.expectEqualStrings("parser.zig", parser_source.relative_path);
+    try std.testing.expectEqualStrings(
+        "pub const Parser = struct {};",
+        parser_source.contents,
+    );
 }
 
-test "SourceManager.loadSource handles missing files" {
+test "getSourceFile returns null for an unknown ID" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    var manager = SourceManager.init(allocator);
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+
+    const root_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.zig-cache/tmp/{s}",
+        .{ cwd, &tmp.sub_path },
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
+    defer manager.deinit();
+
+    const result = manager.getSourceFile(SourceId.init(42));
+
+    try std.testing.expect(result == null);
+}
+
+test "loadSource returns an error for a nonexistent file" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+
+    const root_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.zig-cache/tmp/{s}",
+        .{ cwd, &tmp.sub_path },
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
     defer manager.deinit();
 
     try std.testing.expectError(
         error.FileNotFound,
-        manager.loadSource(io, tmp_dir.dir, "missing.todo"),
+        manager.loadSource(io, "does-not-exist.zig"),
     );
 
-    try std.testing.expectEqual(0, manager.sources.items.len);
+    try std.testing.expectEqual(@as(usize, 0), manager.sources.items.len);
+}
+
+test "sourceProvider returns registered sources" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDir(io, "src", .default_dir);
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "src/main.zig",
+        .data = "pub fn main() void {}",
+    });
+
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+
+    const root_path = try allocator.print(
+        "{s}/.zig-cache/tmp/{s}",
+        .{ cwd, &tmp.sub_path },
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
+    defer manager.deinit();
+
+    const id = try manager.loadSource(io, "src/main.zig");
+
+    const provider = manager.sourceProvider();
+
+    const source = provider.getSource(id) orelse
+        return error.SourceNotFound;
+
+    try std.testing.expectEqualStrings(
+        "src/main.zig",
+        source.path,
+    );
+
+    try std.testing.expectEqualStrings(
+        "pub fn main() void {}",
+        source.text,
+    );
+}
+
+test "sourceProvider returns null for an unknown source ID" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+
+    const root_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.zig-cache/tmp/{s}",
+        .{ cwd, &tmp.sub_path },
+    );
+    defer allocator.free(root_path);
+
+    var manager = try SourceManager.init(allocator, root_path);
+    defer manager.deinit();
+
+    const provider = manager.sourceProvider();
+
+    const source = provider.getSource(SourceId.init(42));
+
+    try std.testing.expect(source == null);
 }

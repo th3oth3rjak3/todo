@@ -7,11 +7,15 @@ pub fn build(b: *std.Build) void {
     const traits_dep = b.dependency("traits", .{});
     const traits_mod = traits_dep.module("traits");
 
+    const diag_dep = b.dependency("diagnostics", .{});
+    const diag_mod = diag_dep.module("diagnostics");
+
     const mod = b.addModule("todo", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "traits", .module = traits_mod },
+            .{ .name = "diagnostics", .module = diag_mod },
         },
     });
 
@@ -24,6 +28,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "todo", .module = mod },
                 .{ .name = "traits", .module = traits_mod },
+                .{ .name = "diagnostics", .module = diag_mod },
             },
         }),
     });
