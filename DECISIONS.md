@@ -20,9 +20,9 @@ Unresolved ideas belong in `IDEAS.md`.
 
 ### D002 — Implementation language
 
-**Decision:** The language implementation will be written in Zig.
+**Decision:** The language implementation will be written in Odin.
 
-**Reason:** Zig provides the low-level control and programming experience desired for this project.
+**Reason:** Odin provides the low-level control and programming experience desired for this project.
 
 ### D003 — Initial implementation strategy
 

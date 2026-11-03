@@ -89,7 +89,7 @@ The standard library should prioritize good APIs and practical functionality ove
 
 ### Generic lexer library
 
-Explore building a reusable Zig library for lexical analysis.
+Explore building a reusable library for lexical analysis.
 
 Potential design:
 
@@ -98,21 +98,6 @@ Potential design:
 - Source spans and position tracking.
 - Consumers translate generic lexemes into their own language-specific tokens.
 - Avoid embedding language-specific keywords or grammar into the library.
-
-Potential API concept:
-
-```zig
-const Lexeme = union(enum) {
-    word: []const u8,
-    integer: IntegerLiteral,
-    decimal: DecimalLiteral,
-    string: []const u8,
-    comma,
-    plus,
-    left_paren,
-    right_paren,
-};
-```
 
 This library could initially be developed alongside `todo` and extracted into its own project if it proves reusable.
 
