@@ -37,7 +37,7 @@ There are no promises about timelines, feature completeness, or the eventual exi
 
 ## Technical details
 
-- **Implementation language:** Odin
+- **Implementation language:** Zig
 - **Implementation strategy:** Interpreter first
 - **Source file extension:** `.todo`
 - **Primary inspiration:** *Crafting Interpreters* by Robert Nystrom
