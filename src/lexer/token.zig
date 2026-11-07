@@ -6,6 +6,9 @@ pub const TokenKind = enum {
     identifier,
     integer,
     float,
+    hex_integer,
+    binary_integer,
+    exponent_float,
     string,
     character,
 
@@ -51,6 +54,9 @@ pub const Token = struct {
     ///
     /// The returned slice borrows from the original source text.
     pub fn lexeme(self: Token, source_text: []const u8) []const u8 {
+        std.debug.assert(self.span.start <= self.span.end);
+        std.debug.assert(self.span.start <= source_text.len);
+        std.debug.assert(self.span.end <= source_text.len);
         return source_text[self.span.start..self.span.end];
     }
 };
