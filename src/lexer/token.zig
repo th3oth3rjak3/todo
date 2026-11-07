@@ -7,6 +7,7 @@ pub const TokenKind = enum {
     integer,
     float,
     string,
+    character,
 
     keyword_public,
     keyword_record,
@@ -19,6 +20,22 @@ pub const TokenKind = enum {
     right_paren,
     semicolon,
 
+    equal,
+    equal_equal,
+    bang,
+    bang_equal,
+
+    plus,
+    minus,
+    star,
+    slash,
+
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+
+    doc_comment,
     eof,
 };
 

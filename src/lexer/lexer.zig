@@ -55,36 +55,42 @@ pub const Lexer = struct {
     ///
     /// Skips whitespace and returns an error if an invalid character is encountered.
     pub fn nextToken(self: *Lexer) TokenResult {
-        self.skipWhitespace();
+        while (true) {
+            self.skipWhitespace();
 
-        const start = self.position;
+            if (self.isAtEnd()) {
+                const position = self.position;
+                return .{
+                    .token = self.makeToken(.eof, position, position),
+                };
+            }
 
-        if (self.isAtEnd()) {
-            return .{
-                .token = .{
-                    .kind = .eof,
-                    .span = .{
-                        .source = self.source_id,
-                        .start = start,
-                        .end = start,
-                    },
-                },
-            };
+            if (self.source_text[self.position] == '/' and
+                self.position + 1 < self.source_text.len and
+                self.source_text[self.position + 1] == '/')
+            {
+                if (self.scanComment()) |doc_token| {
+                    return .{ .token = doc_token };
+                }
+
+                continue;
+            }
+
+            break;
         }
 
         const char = self.source_text[self.position];
 
         if (isIdentifierStart(char)) {
-            return .{
-                .token = self.scanIdentifier(),
-            };
+            return .{ .token = self.scanIdentifier() };
         }
 
         if (isDigit(char)) {
-            return .{
-                .token = self.scanNumber(),
-            };
+            return .{ .token = self.scanNumber() };
         }
+
+        if (char == '"') return self.scanString();
+        if (char == '\'') return self.scanCharacter();
 
         return self.scanPunctuationOrOperator();
     }
@@ -196,6 +202,8 @@ pub const Lexer = struct {
         const start = self.position;
         const char = self.source_text[self.position];
 
+        self.position += 1;
+
         const kind: ?TokenKind = switch (char) {
             '{' => .left_brace,
             '}' => .right_brace,
@@ -204,17 +212,25 @@ pub const Lexer = struct {
             ':' => .colon,
             ',' => .comma,
             ';' => .semicolon,
+
+            '+' => .plus,
+            '-' => .minus,
+            '*' => .star,
+            '/' => .slash,
+
+            '=' => if (self.match('=')) .equal_equal else .equal,
+            '!' => if (self.match('=')) .bang_equal else .bang,
+            '<' => if (self.match('=')) .less_equal else .less,
+            '>' => if (self.match('=')) .greater_equal else .greater,
+
             else => null,
         };
 
         if (kind) |value| {
-            self.position += 1;
             return .{
                 .token = self.makeToken(value, start, self.position),
             };
         }
-
-        self.position += 1;
 
         return .{
             .diagnostic = .{
@@ -227,6 +243,16 @@ pub const Lexer = struct {
                 },
             },
         };
+    }
+
+    /// Consumes the next character if it matches the expected character.
+    fn match(self: *Lexer, expected: u8) bool {
+        if (self.isAtEnd() or self.source_text[self.position] != expected) {
+            return false;
+        }
+
+        self.position += 1;
+        return true;
     }
 
     fn makeToken(
@@ -243,6 +269,188 @@ pub const Lexer = struct {
                 .end = end,
             },
         };
+    }
+
+    /// Scans a line comment, returning a token if it is a documentation comment.
+    fn scanComment(self: *Lexer) ?Token {
+        const start = self.position;
+
+        // Consume the two slashes.
+        self.position += 2;
+
+        // A third slash identifies a documentation comment.
+        if (!self.isAtEnd() and self.source_text[self.position] == '/') {
+            self.position += 1;
+
+            while (!self.isAtEnd() and self.source_text[self.position] != '\n') {
+                self.position += 1;
+            }
+
+            return self.makeToken(.doc_comment, start, self.position);
+        }
+
+        // Consume an ordinary comment.
+        while (!self.isAtEnd() and self.source_text[self.position] != '\n') {
+            self.position += 1;
+        }
+
+        return null;
+    }
+
+    /// Scans a string literal, including its opening and closing quotes.
+    fn scanString(self: *Lexer) TokenResult {
+        const start = self.position;
+        self.position += 1; // Skip opening double quote.
+
+        while (!self.isAtEnd()) {
+            const char = self.source_text[self.position];
+
+            switch (char) {
+                '"' => {
+                    self.position += 1;
+                    return .{ .token = self.makeToken(.string, start, self.position) };
+                },
+                '\\' => {
+                    self.position += 1;
+                    if (self.scanEscapeSequence()) |diagnostic| {
+                        return .{ .diagnostic = diagnostic };
+                    }
+                },
+                '\n', '\r' => {
+                    return .{ .diagnostic = self.makeDiagnostic(
+                        "Unterminated string literal",
+                        start,
+                        self.position,
+                    ) };
+                },
+                else => {
+                    if (self.advanceCodePoint()) |diagnostic| {
+                        return .{ .diagnostic = diagnostic };
+                    }
+                },
+            }
+        }
+
+        return .{ .diagnostic = self.makeDiagnostic(
+            "Unterminated string literal",
+            start,
+            self.position,
+        ) };
+    }
+
+    /// Scans a character literal, including its opening and closing quotes.
+    fn scanCharacter(self: *Lexer) TokenResult {
+        const start = self.position;
+        self.position += 1; // Skip opening single quote.
+
+        if (self.isAtEnd() or self.source_text[self.position] == '\n' or
+            self.source_text[self.position] == '\r' or
+            self.source_text[self.position] == '\'')
+        {
+            return .{ .diagnostic = self.makeDiagnostic(
+                "Expected character",
+                start,
+                self.position,
+            ) };
+        }
+
+        if (self.source_text[self.position] == '\\') {
+            self.position += 1;
+            if (self.scanEscapeSequence()) |diagnostic| {
+                return .{ .diagnostic = diagnostic };
+            }
+        } else {
+            if (self.advanceCodePoint()) |diagnostic| {
+                return .{ .diagnostic = diagnostic };
+            }
+        }
+
+        if (self.isAtEnd() or self.source_text[self.position] != '\'') {
+            return .{ .diagnostic = self.makeDiagnostic(
+                "Expected closing quote after character",
+                start,
+                self.position,
+            ) };
+        }
+
+        self.position += 1;
+        return .{ .token = self.makeToken(.character, start, self.position) };
+    }
+
+    /// Consumes an escape sequence. Returns null when valid, or a diagnostic.
+    fn scanEscapeSequence(self: *Lexer) ?Diagnostic {
+        if (self.isAtEnd()) {
+            return self.makeDiagnostic(
+                "Incomplete escape sequence",
+                self.position - 1,
+                self.position,
+            );
+        }
+
+        const start = self.position - 1;
+        const char = self.source_text[self.position];
+        self.position += 1;
+
+        switch (char) {
+            '0', 'n', 'r', 't', '\\', '\'', '"' => return null,
+            else => return self.makeDiagnostic(
+                "Invalid escape sequence",
+                start,
+                self.position,
+            ),
+        }
+    }
+
+    fn makeDiagnostic(self: *Lexer, message: []const u8, start: usize, end: usize) Diagnostic {
+        return .{
+            .severity = .err,
+            .message = message,
+            .span = .{
+                .source = self.source_id,
+                .start = start,
+                .end = end,
+            },
+        };
+    }
+
+    /// Decodes and consumes one UTF-8 code point.
+    fn advanceCodePoint(self: *Lexer) ?Diagnostic {
+        const start = self.position;
+        const first_byte = self.source_text[self.position];
+
+        const byte_length = std.unicode.utf8ByteSequenceLength(first_byte) catch {
+            self.position += 1;
+            return self.makeDiagnostic("Invalid UTF-8 sequence", start, self.position);
+        };
+
+        const length: usize = @intCast(byte_length);
+        const remaining = self.source_text[self.position..];
+
+        if (remaining.len < length) {
+            self.position = self.source_text.len;
+            return self.makeDiagnostic("Incomplete UTF-8 sequence", start, self.position);
+        }
+
+        const decoded = switch (byte_length) {
+            1 => @as(u21, first_byte),
+            2 => std.unicode.utf8Decode2(remaining[0..2].*) catch {
+                self.position += 1;
+                return self.makeDiagnostic("Invalid UTF-8 sequence", start, self.position);
+            },
+            3 => std.unicode.utf8Decode3(remaining[0..3].*) catch {
+                self.position += 1;
+                return self.makeDiagnostic("Invalid UTF-8 sequence", start, self.position);
+            },
+            4 => std.unicode.utf8Decode4(remaining[0..4].*) catch {
+                self.position += 1;
+                return self.makeDiagnostic("Invalid UTF-8 sequence", start, self.position);
+            },
+            else => unreachable,
+        };
+
+        _ = decoded;
+        self.position += length;
+        return null;
     }
 };
 
@@ -487,4 +695,336 @@ test "invalid character produces diagnostic" {
             try std.testing.expectEqual(@as(usize, 1), diag.span.end);
         },
     }
+}
+
+test "scans operators" {
+    const TestCase = struct {
+        lexeme: []const u8,
+        kind: TokenKind,
+    };
+
+    const cases = [_]TestCase{
+        .{ .lexeme = "=", .kind = .equal },
+        .{ .lexeme = "==", .kind = .equal_equal },
+        .{ .lexeme = "!", .kind = .bang },
+        .{ .lexeme = "!=", .kind = .bang_equal },
+        .{ .lexeme = "+", .kind = .plus },
+        .{ .lexeme = "-", .kind = .minus },
+        .{ .lexeme = "*", .kind = .star },
+        .{ .lexeme = "/", .kind = .slash },
+        .{ .lexeme = "<", .kind = .less },
+        .{ .lexeme = "<=", .kind = .less_equal },
+        .{ .lexeme = ">", .kind = .greater },
+        .{ .lexeme = ">=", .kind = .greater_equal },
+    };
+
+    for (cases) |case| {
+        var lexer = Lexer.init(.{ .value = 1 }, case.lexeme);
+        const result = lexer.nextToken();
+
+        switch (result) {
+            .token => |tok| {
+                try std.testing.expectEqual(case.kind, tok.kind);
+                try std.testing.expectEqualStrings(case.lexeme, tok.lexeme(lexer.source_text));
+            },
+            .diagnostic => return error.UnexpectedDiagnostic,
+        }
+    }
+}
+
+test "scans adjacent operators independently" {
+    var lexer = Lexer.init(.{ .value = 1 }, "===!=");
+
+    const expected = [_]TokenKind{
+        .equal_equal,
+        .equal,
+        .bang_equal,
+    };
+
+    for (expected) |expected_kind| {
+        const result = lexer.nextToken();
+
+        switch (result) {
+            .token => |tok| {
+                try std.testing.expectEqual(expected_kind, tok.kind);
+            },
+            .diagnostic => return error.UnexpectedDiagnostic,
+        }
+    }
+}
+
+test "scans documentation comment" {
+    const source_text = "/// Documents a declaration.";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
+            try std.testing.expectEqualStrings(
+                source_text,
+                tok.lexeme(source_text),
+            );
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "skips ordinary line comment" {
+    const source_text = "// An ordinary comment\n42";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.integer, tok.kind);
+            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans documentation comment followed by token" {
+    const source_text = "/// Documentation\n42";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+
+    const doc_result = lexer.nextToken();
+    const integer_result = lexer.nextToken();
+
+    switch (doc_result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+
+    switch (integer_result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.integer, tok.kind);
+            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans empty documentation comment" {
+    const source_text = "///";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
+            try std.testing.expectEqualStrings("///", tok.lexeme(source_text));
+            try std.testing.expectEqual(@as(usize, 0), tok.span.start);
+            try std.testing.expectEqual(@as(usize, 3), tok.span.end);
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans documentation comment at EOF" {
+    const source_text = "/// Documentation";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
+            try std.testing.expectEqualStrings(source_text, tok.lexeme(source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+
+    const eof_result = lexer.nextToken();
+
+    switch (eof_result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.eof, tok.kind);
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "skips ordinary comment at EOF" {
+    const source_text = "// An ordinary comment";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.eof, tok.kind);
+            try std.testing.expectEqual(source_text.len, tok.span.start);
+            try std.testing.expectEqual(source_text.len, tok.span.end);
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "skips consecutive ordinary comments" {
+    const source_text =
+        \\// First comment
+        \\// Second comment
+        \\// Third comment
+        \\42
+    ;
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.integer, tok.kind);
+            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans division operator followed by ordinary comment" {
+    const source_text = "a / // comment\nb";
+
+    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+
+    const expected = [_]TokenKind{
+        .identifier,
+        .slash,
+        .identifier,
+        .eof,
+    };
+
+    for (expected) |expected_kind| {
+        const result = lexer.nextToken();
+
+        switch (result) {
+            .token => |tok| {
+                try std.testing.expectEqual(expected_kind, tok.kind);
+            },
+            .diagnostic => return error.UnexpectedDiagnostic,
+        }
+    }
+}
+
+test "scan empty string" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"\"");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.string, result.token.kind);
+    try std.testing.expectEqualStrings("\"\"", result.token.lexeme(lexer.source_text));
+}
+
+test "scan string with escaped quote" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"hello \\\"world\\\"\"");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.string, result.token.kind);
+    try std.testing.expectEqualStrings(
+        "\"hello \\\"world\\\"\"",
+        result.token.lexeme(lexer.source_text),
+    );
+}
+
+test "scan string with escaped backslash" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"\\\\\"");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.string, result.token.kind);
+    try std.testing.expectEqualStrings("\"\\\\\"", result.token.lexeme(lexer.source_text));
+}
+
+test "scan character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'a'");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.character, result.token.kind);
+    try std.testing.expectEqualStrings("'a'", result.token.lexeme(lexer.source_text));
+}
+
+test "scan escaped character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'\\n'");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.character, result.token.kind);
+    try std.testing.expectEqualStrings("'\\n'", result.token.lexeme(lexer.source_text));
+}
+
+test "reject empty character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "''");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "reject multiple characters in character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'ab'");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "reject unterminated string literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"hello");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "reject unterminated character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'a");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "scan string containing UTF-8 characters" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"café 🚀\"");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.string, result.token.kind);
+    try std.testing.expectEqualStrings(
+        "\"café 🚀\"",
+        result.token.lexeme(lexer.source_text),
+    );
+}
+
+test "scan two-byte UTF-8 character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'é'");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.character, result.token.kind);
+}
+
+test "scan four-byte UTF-8 character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'🚀'");
+    const result = lexer.nextToken();
+
+    try std.testing.expectEqual(TokenKind.character, result.token.kind);
+}
+
+test "reject invalid UTF-8 in string" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"\xff\"");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "reject incomplete UTF-8 in string" {
+    var lexer = Lexer.init(.{ .value = 1 }, "\"\xc3");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
+}
+
+test "reject invalid UTF-8 in character literal" {
+    var lexer = Lexer.init(.{ .value = 1 }, "'\xff'");
+    const result = lexer.nextToken();
+
+    try std.testing.expect(result == .diagnostic);
 }
