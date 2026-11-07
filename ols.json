@@ -1,0 +1,22 @@
+{
+    "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+    "collections": [
+        {
+            "name": "language_tools",
+            "path": "./src"
+        }
+    ],
+    "enable_hover": true,
+    "enable_document_symbols": true,
+    "enable_references": true,
+    "profiles": [
+        {
+            "name": "default",
+            "checker_path": [
+                "src",
+                "tests"
+            ]
+        }
+    ],
+    "profile": "default"
+}
