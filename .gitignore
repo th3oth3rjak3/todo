@@ -1,1 +1,4 @@
+.zig-cache
+zig-out
+zig-pkg
 context.md
