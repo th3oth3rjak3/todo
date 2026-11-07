@@ -5,6 +5,7 @@ const source = @import("../source/span.zig");
 pub const Kind = enum {
     identifier,
     integer,
+    float,
     string,
 
     keyword_pub,
