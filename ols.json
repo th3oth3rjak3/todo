@@ -3,7 +3,7 @@
     "collections": [
         {
             "name": "language_tools",
-            "path": "./language_tools/src"
+            "path": "./src/language_tools/src"
         }
     ],
     "enable_hover": true,

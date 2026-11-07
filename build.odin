@@ -1,9 +1,9 @@
-package main
+package todo_build
 
 import "core:fmt"
 import "core:os"
 
-LANGUAGE_TOOLS_COLLECTION :: "-collection:language_tools=./language_tools/src"
+LANGUAGE_TOOLS_COLLECTION :: "-collection:language_tools=./src/language_tools/src"
 
 main :: proc() {
     if len(os.args) < 2 {
