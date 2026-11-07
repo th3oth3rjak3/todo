@@ -9,6 +9,7 @@ const TokenKind = token_module.TokenKind;
 
 const diagnostic_module = @import("../diagnostics/diagnostic.zig");
 const Diagnostic = diagnostic_module.Diagnostic;
+const Severity = diagnostic_module.Severity;
 
 const keyword_module = @import("keyword.zig");
 const keywords = keyword_module.keywords;
@@ -85,19 +86,7 @@ pub const Lexer = struct {
             };
         }
 
-        self.position += 1;
-
-        return .{
-            .diagnostic = .{
-                .severity = .err,
-                .message = "Invalid character",
-                .span = .{
-                    .source = self.source_id,
-                    .start = start,
-                    .end = self.position,
-                },
-            },
-        };
+        return self.scanPunctuationOrOperator();
     }
 
     /// Skips whitespace characters.
@@ -199,6 +188,59 @@ pub const Lexer = struct {
                 .source = self.source_id,
                 .start = start,
                 .end = self.position,
+            },
+        };
+    }
+
+    fn scanPunctuationOrOperator(self: *Lexer) TokenResult {
+        const start = self.position;
+        const char = self.source_text[self.position];
+
+        const kind: ?TokenKind = switch (char) {
+            '{' => .left_brace,
+            '}' => .right_brace,
+            '(' => .left_paren,
+            ')' => .right_paren,
+            ':' => .colon,
+            ',' => .comma,
+            ';' => .semicolon,
+            else => null,
+        };
+
+        if (kind) |value| {
+            self.position += 1;
+            return .{
+                .token = self.makeToken(value, start, self.position),
+            };
+        }
+
+        self.position += 1;
+
+        return .{
+            .diagnostic = .{
+                .severity = .err,
+                .message = "Invalid character",
+                .span = .{
+                    .source = self.source_id,
+                    .start = start,
+                    .end = self.position,
+                },
+            },
+        };
+    }
+
+    fn makeToken(
+        self: *Lexer,
+        kind: TokenKind,
+        start: usize,
+        end: usize,
+    ) Token {
+        return .{
+            .kind = kind,
+            .span = .{
+                .source = self.source_id,
+                .start = start,
+                .end = end,
             },
         };
     }
@@ -331,5 +373,118 @@ test "keyword prefixes are identifiers" {
             try std.testing.expectEqualStrings("recorded", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans left brace" {
+    var lexer = Lexer.init(.{ .value = 1 }, "{");
+
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.left_brace, tok.kind);
+            try std.testing.expectEqualStrings("{", tok.lexeme(lexer.source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans right brace" {
+    var lexer = Lexer.init(.{ .value = 1 }, "}");
+
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.right_brace, tok.kind);
+            try std.testing.expectEqualStrings("}", tok.lexeme(lexer.source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans parentheses" {
+    var lexer = Lexer.init(.{ .value = 1 }, "()");
+
+    const left = lexer.nextToken();
+    const right = lexer.nextToken();
+
+    switch (left) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.left_paren, tok.kind);
+            try std.testing.expectEqualStrings("(", tok.lexeme(lexer.source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+
+    switch (right) {
+        .token => |tok| {
+            try std.testing.expectEqual(TokenKind.right_paren, tok.kind);
+            try std.testing.expectEqualStrings(")", tok.lexeme(lexer.source_text));
+        },
+        .diagnostic => return error.UnexpectedDiagnostic,
+    }
+}
+
+test "scans colon comma and semicolon" {
+    var lexer = Lexer.init(.{ .value = 1 }, ":,;");
+
+    const expected = [_]TokenKind{
+        .colon,
+        .comma,
+        .semicolon,
+    };
+
+    for (expected) |expected_kind| {
+        const result = lexer.nextToken();
+
+        switch (result) {
+            .token => |tok| {
+                try std.testing.expectEqual(expected_kind, tok.kind);
+            },
+            .diagnostic => return error.UnexpectedDiagnostic,
+        }
+    }
+}
+
+test "scans multiple punctuation characters in sequence" {
+    var lexer = Lexer.init(.{ .value = 1 }, "{ name: value, }");
+
+    const expected = [_]TokenKind{
+        .left_brace,
+        .identifier,
+        .colon,
+        .identifier,
+        .comma,
+        .right_brace,
+        .eof,
+    };
+
+    for (expected) |expected_kind| {
+        const result = lexer.nextToken();
+
+        switch (result) {
+            .token => |tok| {
+                try std.testing.expectEqual(expected_kind, tok.kind);
+            },
+            .diagnostic => return error.UnexpectedDiagnostic,
+        }
+    }
+}
+
+test "invalid character produces diagnostic" {
+    var lexer = Lexer.init(.{ .value = 1 }, "@");
+
+    const result = lexer.nextToken();
+
+    switch (result) {
+        .token => return error.UnexpectedToken,
+        .diagnostic => |diag| {
+            try std.testing.expectEqual(Severity.err, diag.severity);
+            try std.testing.expectEqualStrings("Invalid character", diag.message);
+            try std.testing.expectEqual(@as(usize, 0), diag.span.start);
+            try std.testing.expectEqual(@as(usize, 1), diag.span.end);
+        },
     }
 }

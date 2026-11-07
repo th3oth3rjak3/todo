@@ -15,6 +15,9 @@ pub const TokenKind = enum {
     right_brace,
     colon,
     comma,
+    left_paren,
+    right_paren,
+    semicolon,
 
     eof,
 };
