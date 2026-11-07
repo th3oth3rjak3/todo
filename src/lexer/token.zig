@@ -2,7 +2,7 @@ const std = @import("std");
 const source = @import("../source/span.zig");
 
 /// The kind of lexical token.
-pub const Kind = enum {
+pub const TokenKind = enum {
     identifier,
     integer,
     float,
@@ -22,7 +22,7 @@ pub const Kind = enum {
 /// Represents a lexical token found in source code.
 pub const Token = struct {
     /// The kind of token.
-    kind: Kind,
+    kind: TokenKind,
 
     /// The location of the token in its source file.
     span: source.Span,

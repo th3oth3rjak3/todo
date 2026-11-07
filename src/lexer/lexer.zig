@@ -1,13 +1,18 @@
 const std = @import("std");
-const source = @import("../source/source.zig");
-const SourceId = source.SourceId;
-const token = @import("token.zig");
-const Token = token.Token;
-const diagnostics = @import("../diagnostics/diagnostic.zig");
-const Diagnostic = diagnostics.Diagnostic;
-const kw = @import("keyword.zig");
-const keywords = kw.keywords;
-const Keyword = kw.Keyword;
+
+const source_module = @import("../source/source.zig");
+const SourceId = source_module.SourceId;
+
+const token_module = @import("token.zig");
+const Token = token_module.Token;
+const TokenKind = token_module.TokenKind;
+
+const diagnostic_module = @import("../diagnostics/diagnostic.zig");
+const Diagnostic = diagnostic_module.Diagnostic;
+
+const keyword_module = @import("keyword.zig");
+const keywords = keyword_module.keywords;
+const Keyword = keyword_module.Keyword;
 
 /// The result of attempting to scan another token.
 pub const TokenResult = union(enum) {
@@ -152,7 +157,7 @@ pub const Lexer = struct {
     }
 
     /// Returns the keyword kind for a lexeme, or `.identifier` if it isn't a keyword.
-    fn identifierKind(lexeme: []const u8) token.Kind {
+    fn identifierKind(lexeme: []const u8) TokenKind {
         for (keywords) |keyword| {
             if (std.mem.eql(u8, lexeme, keyword.lexeme)) {
                 return keyword.kind;
@@ -163,14 +168,14 @@ pub const Lexer = struct {
     }
 
     /// Scans a numeric literal, distinguishing integers from floating-point literals.
-    fn scanNumber(self: *Lexer) token.Token {
+    fn scanNumber(self: *Lexer) Token {
         const start = self.position;
 
         while (!self.isAtEnd() and isDigit(self.source_text[self.position])) {
             self.position += 1;
         }
 
-        var kind: token.Kind = .integer;
+        var kind: TokenKind = .integer;
 
         if (!self.isAtEnd() and self.source_text[self.position] == '.') {
             const dot_position = self.position;
@@ -206,7 +211,7 @@ test "empty source produces EOF" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.eof, tok.kind);
+            try std.testing.expectEqual(TokenKind.eof, tok.kind);
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 0), tok.span.end);
         },
@@ -221,7 +226,7 @@ test "scans integer literals" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.integer, tok.kind);
+            try std.testing.expectEqual(TokenKind.integer, tok.kind);
             try std.testing.expectEqualStrings("42", tok.lexeme(lexer.source_text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 2), tok.span.end);
@@ -237,7 +242,7 @@ test "scans floating-point literals" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.float, tok.kind);
+            try std.testing.expectEqual(TokenKind.float, tok.kind);
             try std.testing.expectEqualStrings("3.14", tok.lexeme(lexer.source_text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 4), tok.span.end);
@@ -253,7 +258,7 @@ test "scans identifiers" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.identifier, tok.kind);
+            try std.testing.expectEqual(TokenKind.identifier, tok.kind);
             try std.testing.expectEqualStrings("person", tok.lexeme(lexer.source_text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 6), tok.span.end);
@@ -269,7 +274,7 @@ test "scans identifiers containing underscores and digits" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.identifier, tok.kind);
+            try std.testing.expectEqual(TokenKind.identifier, tok.kind);
             try std.testing.expectEqualStrings("_person2", tok.lexeme(lexer.source_text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 8), tok.span.end);
@@ -285,7 +290,7 @@ test "scans pub keyword" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.keyword_pub, tok.kind);
+            try std.testing.expectEqual(TokenKind.keyword_pub, tok.kind);
             try std.testing.expectEqualStrings("pub", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
@@ -299,7 +304,7 @@ test "scans struct keyword" {
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.keyword_struct, tok.kind);
+            try std.testing.expectEqual(TokenKind.keyword_struct, tok.kind);
             try std.testing.expectEqualStrings("struct", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
@@ -314,7 +319,7 @@ test "keyword prefixes are identifiers" {
 
     switch (first) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.identifier, tok.kind);
+            try std.testing.expectEqual(TokenKind.identifier, tok.kind);
             try std.testing.expectEqualStrings("public", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
@@ -322,7 +327,7 @@ test "keyword prefixes are identifiers" {
 
     switch (second) {
         .token => |tok| {
-            try std.testing.expectEqual(token.Kind.identifier, tok.kind);
+            try std.testing.expectEqual(TokenKind.identifier, tok.kind);
             try std.testing.expectEqualStrings("structure", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
