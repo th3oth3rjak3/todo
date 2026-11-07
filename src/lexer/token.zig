@@ -8,8 +8,8 @@ pub const TokenKind = enum {
     float,
     string,
 
-    keyword_pub,
-    keyword_struct,
+    keyword_public,
+    keyword_record,
 
     left_brace,
     right_brace,

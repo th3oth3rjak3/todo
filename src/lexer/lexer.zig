@@ -283,36 +283,36 @@ test "scans identifiers containing underscores and digits" {
     }
 }
 
-test "scans pub keyword" {
-    var lexer = Lexer.init(.{ .value = 1 }, "pub");
+test "scans public keyword" {
+    var lexer = Lexer.init(.{ .value = 1 }, "public");
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(TokenKind.keyword_pub, tok.kind);
-            try std.testing.expectEqualStrings("pub", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqual(TokenKind.keyword_public, tok.kind);
+            try std.testing.expectEqualStrings("public", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
-test "scans struct keyword" {
-    var lexer = Lexer.init(.{ .value = 1 }, "struct");
+test "scans record keyword" {
+    var lexer = Lexer.init(.{ .value = 1 }, "record");
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
-            try std.testing.expectEqual(TokenKind.keyword_struct, tok.kind);
-            try std.testing.expectEqualStrings("struct", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqual(TokenKind.keyword_record, tok.kind);
+            try std.testing.expectEqualStrings("record", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "keyword prefixes are identifiers" {
-    var lexer = Lexer.init(.{ .value = 1 }, "public structure");
+    var lexer = Lexer.init(.{ .value = 1 }, "publicly recorded");
 
     const first = lexer.nextToken();
     const second = lexer.nextToken();
@@ -320,7 +320,7 @@ test "keyword prefixes are identifiers" {
     switch (first) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("public", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("publicly", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -328,7 +328,7 @@ test "keyword prefixes are identifiers" {
     switch (second) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("structure", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("recorded", tok.lexeme(lexer.source_text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }

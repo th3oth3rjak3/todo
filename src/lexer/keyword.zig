@@ -7,6 +7,6 @@ pub const Keyword = struct {
 };
 
 pub const keywords = [_]Keyword{
-    .{ .lexeme = "pub", .kind = .keyword_pub },
-    .{ .lexeme = "struct", .kind = .keyword_struct },
+    .{ .lexeme = "public", .kind = .keyword_public },
+    .{ .lexeme = "record", .kind = .keyword_record },
 };
