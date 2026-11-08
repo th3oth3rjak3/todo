@@ -12,7 +12,7 @@ pub const TokenKind = enum {
     string,
     character,
 
-    keyword_public,
+    keyword_pub,
     keyword_record,
 
     left_brace,
