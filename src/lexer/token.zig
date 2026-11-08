@@ -1,5 +1,6 @@
 const std = @import("std");
 const source = @import("../source/span.zig");
+const Span = source.Span;
 
 /// The kind of lexical token.
 pub const TokenKind = enum {
@@ -48,7 +49,7 @@ pub const Token = struct {
     kind: TokenKind,
 
     /// The location of the token in its source file.
-    span: source.Span,
+    span: Span,
 
     /// Returns the source text covered by this token.
     ///

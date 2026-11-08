@@ -1,4 +1,5 @@
 const source = @import("../source/span.zig");
+const Span = source.Span;
 
 /// The severity level of a diagnostic.
 pub const Severity = enum {
@@ -21,5 +22,34 @@ pub const Diagnostic = struct {
     message: []const u8,
 
     /// The location in source code associated with the diagnostic.
-    span: source.Span,
+    span: Span,
+
+    const Self = @This();
+
+    /// Creates an error diagnostic.
+    pub fn err(message: []const u8, span: Span) Self {
+        return .{
+            .severity = .err,
+            .message = message,
+            .span = span,
+        };
+    }
+
+    /// Creates a warning diagnostic.
+    pub fn warn(message: []const u8, span: Span) Self {
+        return .{
+            .severity = .warning,
+            .message = message,
+            .span = span,
+        };
+    }
+
+    /// Creates an informational diagnostic note.
+    pub fn note(message: []const u8, span: Span) Self {
+        return .{
+            .severity = .note,
+            .message = message,
+            .span = span,
+        };
+    }
 };

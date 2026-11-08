@@ -13,6 +13,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const args_dep = b.dependency("args", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("args", args_dep.module("args"));
+
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run todo");
