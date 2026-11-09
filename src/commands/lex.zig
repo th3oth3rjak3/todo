@@ -52,8 +52,12 @@ pub fn run(
 
     var tokens = try std.ArrayList(Token).initCapacity(allocator, 0);
     var diagnostics = try std.ArrayList(Diagnostic).initCapacity(allocator, 0);
-
-    var lexer = Lexer.init(.{ .value = SOURCE_ID }, source_text);
+    const source = Source{
+        .id = .{ .value = SOURCE_ID },
+        .path = args.file,
+        .text = source_text,
+    };
+    var lexer = Lexer.init(&source);
 
     token_loop: while (true) {
         const result = lexer.nextToken();

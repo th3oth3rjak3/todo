@@ -2,6 +2,7 @@ const std = @import("std");
 
 const source_module = @import("../source/source.zig");
 const SourceId = source_module.SourceId;
+const Source = source_module.Source;
 
 const token_module = @import("token.zig");
 const Token = token_module.Token;
@@ -26,23 +27,19 @@ pub const TokenResult = union(enum) {
 
 /// Scans a single source file and produces lexical tokens.
 pub const Lexer = struct {
-    /// Identifies the source file being scanned.
-    source_id: SourceId,
-
-    /// The source text being scanned.
+    /// The source containing the text being scanned.
     ///
     /// The caller owns this memory and must keep it alive for the
     /// lifetime of the lexer.
-    source_text: []const u8,
+    source: *const Source,
 
     /// The byte offset of the next character to be scanned.
     position: usize,
 
     /// Creates a lexer for the given source file.
-    pub fn init(source_id: SourceId, source_text: []const u8) Lexer {
+    pub fn init(source: *const Source) Lexer {
         return .{
-            .source_id = source_id,
-            .source_text = source_text,
+            .source = source,
             .position = 0,
         };
     }
@@ -65,9 +62,9 @@ pub const Lexer = struct {
                 };
             }
 
-            if (self.source_text[self.position] == '/' and
-                self.position + 1 < self.source_text.len and
-                self.source_text[self.position + 1] == '/')
+            if (self.source.text[self.position] == '/' and
+                self.position + 1 < self.source.text.len and
+                self.source.text[self.position + 1] == '/')
             {
                 if (self.scanComment()) |doc_token| {
                     return .{ .token = doc_token };
@@ -79,7 +76,7 @@ pub const Lexer = struct {
             break;
         }
 
-        const char = self.source_text[self.position];
+        const char = self.source.text[self.position];
 
         if (isIdentifierStart(char)) {
             return .{ .token = self.scanIdentifier() };
@@ -98,7 +95,7 @@ pub const Lexer = struct {
     /// Skips whitespace characters.
     fn skipWhitespace(self: *Lexer) void {
         while (!self.isAtEnd()) {
-            switch (self.source_text[self.position]) {
+            switch (self.source.text[self.position]) {
                 ' ', '\t', '\n', '\r' => self.position += 1,
                 else => return,
             }
@@ -107,7 +104,7 @@ pub const Lexer = struct {
 
     /// Returns whether the end of the source has been reached.
     fn isAtEnd(self: *const Lexer) bool {
-        return self.position >= self.source_text.len;
+        return self.position >= self.source.text.len;
     }
 
     /// Returns whether a byte is an ASCII letter.
@@ -135,16 +132,16 @@ pub const Lexer = struct {
     fn scanIdentifier(self: *Lexer) Token {
         const start = self.position;
 
-        while (!self.isAtEnd() and isIdentifier(self.source_text[self.position])) {
+        while (!self.isAtEnd() and isIdentifier(self.source.text[self.position])) {
             self.position += 1;
         }
 
-        const lexeme = self.source_text[start..self.position];
+        const lexeme = self.source.text[start..self.position];
 
         return .{
             .kind = identifierKind(lexeme),
             .span = .{
-                .source = self.source_id,
+                .source = self.source.id,
                 .start = start,
                 .end = self.position,
             },
@@ -183,8 +180,8 @@ pub const Lexer = struct {
         const digits_start = self.position;
 
         while (!self.isAtEnd() and
-            (self.isRadixDigit(self.source_text[self.position], radix) or
-                self.source_text[self.position] == '_'))
+            (self.isRadixDigit(self.source.text[self.position], radix) or
+                self.source.text[self.position] == '_'))
         {
             self.position += 1;
         }
@@ -197,7 +194,7 @@ pub const Lexer = struct {
             ) };
         }
 
-        if (self.source_text[self.position - 1] == '_') {
+        if (self.source.text[self.position - 1] == '_') {
             return .{ .diagnostic = self.makeDiagnostic(
                 "Numeric literal cannot end with a separator",
                 start,
@@ -209,7 +206,7 @@ pub const Lexer = struct {
             return .{ .diagnostic = diagnostic };
         }
 
-        if (!self.isAtEnd() and std.ascii.isAlphanumeric(self.source_text[self.position])) {
+        if (!self.isAtEnd() and std.ascii.isAlphanumeric(self.source.text[self.position])) {
             return .{ .diagnostic = self.makeDiagnostic(
                 "Invalid digit in numeric literal",
                 self.position,
@@ -236,11 +233,11 @@ pub const Lexer = struct {
 
         var kind: TokenKind = .integer;
 
-        if (!self.isAtEnd() and self.source_text[self.position] == '.') {
+        if (!self.isAtEnd() and self.source.text[self.position] == '.') {
             const dot_position = self.position;
             self.position += 1;
 
-            if (self.isAtEnd() or !isDigit(self.source_text[self.position])) {
+            if (self.isAtEnd() or !isDigit(self.source.text[self.position])) {
                 return .{ .diagnostic = self.makeDiagnostic(
                     "Expected digit after decimal point",
                     dot_position,
@@ -257,13 +254,13 @@ pub const Lexer = struct {
         }
 
         if (!self.isAtEnd() and
-            (self.source_text[self.position] == 'e' or self.source_text[self.position] == 'E'))
+            (self.source.text[self.position] == 'e' or self.source.text[self.position] == 'E'))
         {
             kind = .exponent_float;
             self.position += 1;
 
             if (!self.isAtEnd() and
-                (self.source_text[self.position] == '+' or self.source_text[self.position] == '-'))
+                (self.source.text[self.position] == '+' or self.source.text[self.position] == '-'))
             {
                 self.position += 1;
             }
@@ -290,7 +287,7 @@ pub const Lexer = struct {
     /// Consumes decimal digits and separators.
     fn scanDecimalDigits(self: *Lexer) void {
         while (!self.isAtEnd() and
-            (isDigit(self.source_text[self.position]) or self.source_text[self.position] == '_'))
+            (isDigit(self.source.text[self.position]) or self.source.text[self.position] == '_'))
         {
             self.position += 1;
         }
@@ -298,7 +295,7 @@ pub const Lexer = struct {
 
     /// Validates separators in a decimal digit sequence.
     fn validateDecimalDigits(self: *Lexer, start: usize) ?Diagnostic {
-        if (self.position > start and self.source_text[self.position - 1] == '_') {
+        if (self.position > start and self.source.text[self.position - 1] == '_') {
             return self.makeDiagnostic(
                 "Numeric literal cannot end with a separator",
                 start,
@@ -314,11 +311,11 @@ pub const Lexer = struct {
         var i = start;
 
         while (i < self.position) : (i += 1) {
-            if (self.source_text[i] != '_') continue;
+            if (self.source.text[i] != '_') continue;
 
             if (i == start or i + 1 == self.position or
-                !self.isNumericDigit(self.source_text[i - 1]) or
-                !self.isNumericDigit(self.source_text[i + 1]))
+                !self.isNumericDigit(self.source.text[i - 1]) or
+                !self.isNumericDigit(self.source.text[i + 1]))
             {
                 return self.makeDiagnostic(
                     "Invalid numeric separator",
@@ -345,12 +342,12 @@ pub const Lexer = struct {
     }
 
     fn startsWith(self: *Lexer, prefix: []const u8) bool {
-        return std.mem.startsWith(u8, self.source_text[self.position..], prefix);
+        return std.mem.startsWith(u8, self.source.text[self.position..], prefix);
     }
 
     fn scanPunctuationOrOperator(self: *Lexer) TokenResult {
         const start = self.position;
-        const char = self.source_text[self.position];
+        const char = self.source.text[self.position];
 
         self.position += 1;
 
@@ -387,7 +384,7 @@ pub const Lexer = struct {
                 .severity = .err,
                 .message = "Invalid character",
                 .span = .{
-                    .source = self.source_id,
+                    .source = self.source.id,
                     .start = start,
                     .end = self.position,
                 },
@@ -397,7 +394,7 @@ pub const Lexer = struct {
 
     /// Consumes the next character if it matches the expected character.
     fn match(self: *Lexer, expected: u8) bool {
-        if (self.isAtEnd() or self.source_text[self.position] != expected) {
+        if (self.isAtEnd() or self.source.text[self.position] != expected) {
             return false;
         }
 
@@ -414,7 +411,7 @@ pub const Lexer = struct {
         return .{
             .kind = kind,
             .span = .{
-                .source = self.source_id,
+                .source = self.source.id,
                 .start = start,
                 .end = end,
             },
@@ -429,10 +426,10 @@ pub const Lexer = struct {
         self.position += 2;
 
         // A third slash identifies a documentation comment.
-        if (!self.isAtEnd() and self.source_text[self.position] == '/') {
+        if (!self.isAtEnd() and self.source.text[self.position] == '/') {
             self.position += 1;
 
-            while (!self.isAtEnd() and self.source_text[self.position] != '\n') {
+            while (!self.isAtEnd() and self.source.text[self.position] != '\n') {
                 self.position += 1;
             }
 
@@ -440,7 +437,7 @@ pub const Lexer = struct {
         }
 
         // Consume an ordinary comment.
-        while (!self.isAtEnd() and self.source_text[self.position] != '\n') {
+        while (!self.isAtEnd() and self.source.text[self.position] != '\n') {
             self.position += 1;
         }
 
@@ -453,7 +450,7 @@ pub const Lexer = struct {
         self.position += 1; // Skip opening double quote.
 
         while (!self.isAtEnd()) {
-            const char = self.source_text[self.position];
+            const char = self.source.text[self.position];
 
             switch (char) {
                 '"' => {
@@ -493,9 +490,9 @@ pub const Lexer = struct {
         const start = self.position;
         self.position += 1;
 
-        if (self.isAtEnd() or self.source_text[self.position] == '\n' or
-            self.source_text[self.position] == '\r' or
-            self.source_text[self.position] == '\'')
+        if (self.isAtEnd() or self.source.text[self.position] == '\n' or
+            self.source.text[self.position] == '\r' or
+            self.source.text[self.position] == '\'')
         {
             return .{ .diagnostic = self.makeDiagnostic(
                 "Expected character",
@@ -504,7 +501,7 @@ pub const Lexer = struct {
             ) };
         }
 
-        if (self.source_text[self.position] == '\\') {
+        if (self.source.text[self.position] == '\\') {
             self.position += 1;
             if (self.scanEscapeSequence()) |diagnostic| {
                 return .{ .diagnostic = diagnostic };
@@ -517,13 +514,13 @@ pub const Lexer = struct {
 
         var valid = true;
 
-        while (!self.isAtEnd() and self.source_text[self.position] != '\'' and
-            self.source_text[self.position] != '\n' and
-            self.source_text[self.position] != '\r')
+        while (!self.isAtEnd() and self.source.text[self.position] != '\'' and
+            self.source.text[self.position] != '\n' and
+            self.source.text[self.position] != '\r')
         {
             valid = false;
 
-            if (self.source_text[self.position] == '\\') {
+            if (self.source.text[self.position] == '\\') {
                 self.position += 1;
                 if (self.scanEscapeSequence()) |diagnostic| {
                     return .{ .diagnostic = diagnostic };
@@ -535,7 +532,7 @@ pub const Lexer = struct {
             }
         }
 
-        if (self.isAtEnd() or self.source_text[self.position] != '\'') {
+        if (self.isAtEnd() or self.source.text[self.position] != '\'') {
             return .{ .diagnostic = self.makeDiagnostic(
                 "Expected closing quote after character",
                 start,
@@ -567,7 +564,7 @@ pub const Lexer = struct {
         }
 
         const start = self.position - 1;
-        const char = self.source_text[self.position];
+        const char = self.source.text[self.position];
         self.position += 1;
 
         switch (char) {
@@ -583,7 +580,7 @@ pub const Lexer = struct {
 
     /// Consumes and validates a Unicode escape in the form \u{...}.
     fn scanUnicodeEscape(self: *Lexer, start: usize) ?Diagnostic {
-        if (self.isAtEnd() or self.source_text[self.position] != '{') {
+        if (self.isAtEnd() or self.source.text[self.position] != '{') {
             return self.makeDiagnostic("Expected '{' after '\\u'", start, self.position);
         }
 
@@ -593,9 +590,9 @@ pub const Lexer = struct {
         var digit_count: usize = 0;
         var too_many_digits = false;
 
-        while (!self.isAtEnd() and isHexDigit(self.source_text[self.position])) {
+        while (!self.isAtEnd() and isHexDigit(self.source.text[self.position])) {
             if (digit_count < 6) {
-                value = value * 16 + hexValue(self.source_text[self.position]);
+                value = value * 16 + hexValue(self.source.text[self.position]);
             } else {
                 too_many_digits = true;
             }
@@ -608,7 +605,7 @@ pub const Lexer = struct {
             return self.makeDiagnostic("Expected hexadecimal digits in Unicode escape", start, self.position);
         }
 
-        if (self.isAtEnd() or self.source_text[self.position] != '}') {
+        if (self.isAtEnd() or self.source.text[self.position] != '}') {
             return self.makeDiagnostic("Expected '}' after Unicode escape", start, self.position);
         }
 
@@ -645,7 +642,7 @@ pub const Lexer = struct {
             .severity = .err,
             .message = message,
             .span = .{
-                .source = self.source_id,
+                .source = self.source.id,
                 .start = start,
                 .end = end,
             },
@@ -655,7 +652,7 @@ pub const Lexer = struct {
     /// Decodes and consumes one UTF-8 code point.
     fn advanceCodePoint(self: *Lexer) ?Diagnostic {
         const start = self.position;
-        const first_byte = self.source_text[self.position];
+        const first_byte = self.source.text[self.position];
 
         const byte_length = std.unicode.utf8ByteSequenceLength(first_byte) catch {
             self.position += 1;
@@ -663,10 +660,10 @@ pub const Lexer = struct {
         };
 
         const length: usize = @intCast(byte_length);
-        const remaining = self.source_text[self.position..];
+        const remaining = self.source.text[self.position..];
 
         if (remaining.len < length) {
-            self.position = self.source_text.len;
+            self.position = self.source.text.len;
             return self.makeDiagnostic("Incomplete UTF-8 sequence", start, self.position);
         }
 
@@ -693,8 +690,17 @@ pub const Lexer = struct {
     }
 };
 
+fn makeSource(text: []const u8) Source {
+    return .{
+        .id = .{ .value = 1 },
+        .path = "",
+        .text = text,
+    };
+}
+
 test "empty source produces EOF" {
-    var lexer = Lexer.init(.{ .value = 1 }, "");
+    const source = makeSource("");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
@@ -709,14 +715,15 @@ test "empty source produces EOF" {
 }
 
 test "scans integer literals" {
-    var lexer = Lexer.init(.{ .value = 1 }, "42");
+    const source = makeSource("42");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.integer, tok.kind);
-            try std.testing.expectEqualStrings("42", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("42", tok.lexeme(lexer.source.text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 2), tok.span.end);
         },
@@ -725,14 +732,15 @@ test "scans integer literals" {
 }
 
 test "scans floating-point literals" {
-    var lexer = Lexer.init(.{ .value = 1 }, "3.14");
+    const source = makeSource("3.14");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.float, tok.kind);
-            try std.testing.expectEqualStrings("3.14", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("3.14", tok.lexeme(lexer.source.text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 4), tok.span.end);
         },
@@ -741,14 +749,15 @@ test "scans floating-point literals" {
 }
 
 test "scans identifiers" {
-    var lexer = Lexer.init(.{ .value = 1 }, "person");
+    const source = makeSource("person");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("person", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("person", tok.lexeme(lexer.source.text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 6), tok.span.end);
         },
@@ -757,14 +766,15 @@ test "scans identifiers" {
 }
 
 test "scans identifiers containing underscores and digits" {
-    var lexer = Lexer.init(.{ .value = 1 }, "_person2");
+    const source = makeSource("_person2");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("_person2", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("_person2", tok.lexeme(lexer.source.text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 8), tok.span.end);
         },
@@ -773,35 +783,38 @@ test "scans identifiers containing underscores and digits" {
 }
 
 test "scans pub keyword" {
-    var lexer = Lexer.init(.{ .value = 1 }, "pub");
+    const source = makeSource("pub");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.keyword_pub, tok.kind);
-            try std.testing.expectEqualStrings("pub", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("pub", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "scans record keyword" {
-    var lexer = Lexer.init(.{ .value = 1 }, "record");
+    const source = makeSource("record");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.keyword_record, tok.kind);
-            try std.testing.expectEqualStrings("record", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("record", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "keyword prefixes are identifiers" {
-    var lexer = Lexer.init(.{ .value = 1 }, "public recorded");
+    const source = makeSource("public recorded");
+    var lexer = Lexer.init(&source);
 
     const first = lexer.nextToken();
     const second = lexer.nextToken();
@@ -809,7 +822,7 @@ test "keyword prefixes are identifiers" {
     switch (first) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("public", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("public", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -817,42 +830,45 @@ test "keyword prefixes are identifiers" {
     switch (second) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.identifier, tok.kind);
-            try std.testing.expectEqualStrings("recorded", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("recorded", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "scans left brace" {
-    var lexer = Lexer.init(.{ .value = 1 }, "{");
+    const source = makeSource("{");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.left_brace, tok.kind);
-            try std.testing.expectEqualStrings("{", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("{", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "scans right brace" {
-    var lexer = Lexer.init(.{ .value = 1 }, "}");
+    const source = makeSource("}");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.right_brace, tok.kind);
-            try std.testing.expectEqualStrings("}", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("}", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "scans parentheses" {
-    var lexer = Lexer.init(.{ .value = 1 }, "()");
+    const source = makeSource("()");
+    var lexer = Lexer.init(&source);
 
     const left = lexer.nextToken();
     const right = lexer.nextToken();
@@ -860,7 +876,7 @@ test "scans parentheses" {
     switch (left) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.left_paren, tok.kind);
-            try std.testing.expectEqualStrings("(", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings("(", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -868,14 +884,15 @@ test "scans parentheses" {
     switch (right) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.right_paren, tok.kind);
-            try std.testing.expectEqualStrings(")", tok.lexeme(lexer.source_text));
+            try std.testing.expectEqualStrings(")", tok.lexeme(lexer.source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
 }
 
 test "scans colon comma and semicolon" {
-    var lexer = Lexer.init(.{ .value = 1 }, ":,;");
+    const source = makeSource(":,;");
+    var lexer = Lexer.init(&source);
 
     const expected = [_]TokenKind{
         .colon,
@@ -896,7 +913,8 @@ test "scans colon comma and semicolon" {
 }
 
 test "scans multiple punctuation characters in sequence" {
-    var lexer = Lexer.init(.{ .value = 1 }, "{ name: value, }");
+    const source = makeSource("{ name: value, }");
+    var lexer = Lexer.init(&source);
 
     const expected = [_]TokenKind{
         .left_brace,
@@ -921,7 +939,8 @@ test "scans multiple punctuation characters in sequence" {
 }
 
 test "invalid character produces diagnostic" {
-    var lexer = Lexer.init(.{ .value = 1 }, "@");
+    const source = makeSource("@");
+    var lexer = Lexer.init(&source);
 
     const result = lexer.nextToken();
 
@@ -958,13 +977,14 @@ test "scans operators" {
     };
 
     for (cases) |case| {
-        var lexer = Lexer.init(.{ .value = 1 }, case.lexeme);
+        const source = makeSource(case.lexeme);
+        var lexer = Lexer.init(&source);
         const result = lexer.nextToken();
 
         switch (result) {
             .token => |tok| {
                 try std.testing.expectEqual(case.kind, tok.kind);
-                try std.testing.expectEqualStrings(case.lexeme, tok.lexeme(lexer.source_text));
+                try std.testing.expectEqualStrings(case.lexeme, tok.lexeme(lexer.source.text));
             },
             .diagnostic => return error.UnexpectedDiagnostic,
         }
@@ -972,7 +992,8 @@ test "scans operators" {
 }
 
 test "scans adjacent operators independently" {
-    var lexer = Lexer.init(.{ .value = 1 }, "===!=");
+    const source = makeSource("===!=");
+    var lexer = Lexer.init(&source);
 
     const expected = [_]TokenKind{
         .equal_equal,
@@ -994,16 +1015,16 @@ test "scans adjacent operators independently" {
 
 test "scans documentation comment" {
     const source_text = "/// Documents a declaration.";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
             try std.testing.expectEqualStrings(
-                source_text,
-                tok.lexeme(source_text),
+                source.text,
+                tok.lexeme(source.text),
             );
         },
         .diagnostic => return error.UnexpectedDiagnostic,
@@ -1012,14 +1033,14 @@ test "scans documentation comment" {
 
 test "skips ordinary line comment" {
     const source_text = "// An ordinary comment\n42";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.integer, tok.kind);
-            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+            try std.testing.expectEqualStrings("42", tok.lexeme(source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -1027,8 +1048,8 @@ test "skips ordinary line comment" {
 
 test "scans documentation comment followed by token" {
     const source_text = "/// Documentation\n42";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
 
     const doc_result = lexer.nextToken();
     const integer_result = lexer.nextToken();
@@ -1043,7 +1064,7 @@ test "scans documentation comment followed by token" {
     switch (integer_result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.integer, tok.kind);
-            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+            try std.testing.expectEqualStrings("42", tok.lexeme(source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -1051,14 +1072,14 @@ test "scans documentation comment followed by token" {
 
 test "scans empty documentation comment" {
     const source_text = "///";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
-            try std.testing.expectEqualStrings("///", tok.lexeme(source_text));
+            try std.testing.expectEqualStrings("///", tok.lexeme(source.text));
             try std.testing.expectEqual(@as(usize, 0), tok.span.start);
             try std.testing.expectEqual(@as(usize, 3), tok.span.end);
         },
@@ -1068,15 +1089,14 @@ test "scans empty documentation comment" {
 
 test "scans documentation comment at EOF" {
     const source_text = "/// Documentation";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.doc_comment, tok.kind);
-            try std.testing.expectEqualStrings(source_text, tok.lexeme(source_text));
+            try std.testing.expectEqualStrings(source.text, tok.lexeme(source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -1093,15 +1113,15 @@ test "scans documentation comment at EOF" {
 
 test "skips ordinary comment at EOF" {
     const source_text = "// An ordinary comment";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.eof, tok.kind);
-            try std.testing.expectEqual(source_text.len, tok.span.start);
-            try std.testing.expectEqual(source_text.len, tok.span.end);
+            try std.testing.expectEqual(source.text.len, tok.span.start);
+            try std.testing.expectEqual(source.text.len, tok.span.end);
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -1114,14 +1134,14 @@ test "skips consecutive ordinary comments" {
         \\// Third comment
         \\42
     ;
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     switch (result) {
         .token => |tok| {
             try std.testing.expectEqual(TokenKind.integer, tok.kind);
-            try std.testing.expectEqualStrings("42", tok.lexeme(source_text));
+            try std.testing.expectEqualStrings("42", tok.lexeme(source.text));
         },
         .diagnostic => return error.UnexpectedDiagnostic,
     }
@@ -1129,8 +1149,8 @@ test "skips consecutive ordinary comments" {
 
 test "scans division operator followed by ordinary comment" {
     const source_text = "a / // comment\nb";
-
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
 
     const expected = [_]TokenKind{
         .identifier,
@@ -1152,117 +1172,147 @@ test "scans division operator followed by ordinary comment" {
 }
 
 test "scan empty string" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"\"");
+    const source_text = "\"\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.string, result.token.kind);
-    try std.testing.expectEqualStrings("\"\"", result.token.lexeme(lexer.source_text));
+    try std.testing.expectEqualStrings("\"\"", result.token.lexeme(lexer.source.text));
 }
 
 test "scan string with escaped quote" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"hello \\\"world\\\"\"");
+    const source_text = "\"hello \\\"world\\\"\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.string, result.token.kind);
     try std.testing.expectEqualStrings(
         "\"hello \\\"world\\\"\"",
-        result.token.lexeme(lexer.source_text),
+        result.token.lexeme(lexer.source.text),
     );
 }
 
 test "scan string with escaped backslash" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"\\\\\"");
+    const source_text = "\"\\\\\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.string, result.token.kind);
-    try std.testing.expectEqualStrings("\"\\\\\"", result.token.lexeme(lexer.source_text));
+    try std.testing.expectEqualStrings("\"\\\\\"", result.token.lexeme(lexer.source.text));
 }
 
 test "scan character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'a'");
+    const source_text = "'a'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.character, result.token.kind);
-    try std.testing.expectEqualStrings("'a'", result.token.lexeme(lexer.source_text));
+    try std.testing.expectEqualStrings("'a'", result.token.lexeme(lexer.source.text));
 }
 
 test "scan escaped character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'\\n'");
+    const source_text = "'\\n'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.character, result.token.kind);
-    try std.testing.expectEqualStrings("'\\n'", result.token.lexeme(lexer.source_text));
+    try std.testing.expectEqualStrings("'\\n'", result.token.lexeme(lexer.source.text));
 }
 
 test "reject empty character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "''");
+    const source_text = "''";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject multiple characters in character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'ab'");
+    const source_text = "'ab'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject unterminated string literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"hello");
+    const source_text = "\"hello";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject unterminated character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'a");
+    const source_text = "'a";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "scan string containing UTF-8 characters" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"café 🚀\"");
+    const source_text = "\"café 🚀\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.string, result.token.kind);
     try std.testing.expectEqualStrings(
         "\"café 🚀\"",
-        result.token.lexeme(lexer.source_text),
+        result.token.lexeme(lexer.source.text),
     );
 }
 
 test "scan two-byte UTF-8 character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'é'");
+    const source_text = "'é'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.character, result.token.kind);
 }
 
 test "scan four-byte UTF-8 character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'🚀'");
+    const source_text = "'🚀'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expectEqual(TokenKind.character, result.token.kind);
 }
 
 test "reject invalid UTF-8 in string" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"\xff\"");
+    const source_text = "\"\xff\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject incomplete UTF-8 in string" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"\xc3");
+    const source_text = "\"\xc3";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject invalid UTF-8 in character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'\xff'");
+    const source_text = "'\xff'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1270,41 +1320,41 @@ test "reject invalid UTF-8 in character literal" {
 
 test "integer literal with digit separators" {
     const source_text = "1_000";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
     try std.testing.expectEqual(TokenKind.integer, result.token.kind);
-    try std.testing.expectEqualStrings("1_000", result.token.lexeme(source_text));
+    try std.testing.expectEqualStrings("1_000", result.token.lexeme(source.text));
 }
 
 test "integer literal with multiple digit separators" {
     const source_text = "1_000_000";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
     try std.testing.expectEqual(TokenKind.integer, result.token.kind);
-    try std.testing.expectEqualStrings("1_000_000", result.token.lexeme(source_text));
+    try std.testing.expectEqualStrings("1_000_000", result.token.lexeme(source.text));
 }
 
 test "floating-point literal with digit separators" {
     const source_text = "1_234.56_78";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
     try std.testing.expectEqual(TokenKind.float, result.token.kind);
-    try std.testing.expectEqualStrings("1_234.56_78", result.token.lexeme(source_text));
+    try std.testing.expectEqualStrings("1_234.56_78", result.token.lexeme(source.text));
 }
 
 test "numeric literal with consecutive separators is invalid" {
     const source_text = "1__000";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1313,8 +1363,8 @@ test "numeric literal with consecutive separators is invalid" {
 
 test "numeric literal cannot start a fractional part with a separator" {
     const source_text = "1._000";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1326,8 +1376,8 @@ test "numeric literal cannot start a fractional part with a separator" {
 
 test "numeric literal cannot end with a decimal point" {
     const source_text = "12.";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1339,8 +1389,8 @@ test "numeric literal cannot end with a decimal point" {
 
 test "integer literal cannot end with a separator" {
     const source_text = "100_";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1352,8 +1402,8 @@ test "integer literal cannot end with a separator" {
 
 test "floating-point literal cannot end with a separator" {
     const source_text = "12.5_";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1365,19 +1415,19 @@ test "floating-point literal cannot end with a separator" {
 
 test "string literal with Unicode escape" {
     const source_text = "\"\\u{00E9}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
     try std.testing.expectEqual(TokenKind.string, result.token.kind);
-    try std.testing.expectEqualStrings(source_text, result.token.lexeme(source_text));
+    try std.testing.expectEqualStrings(source.text, result.token.lexeme(source.text));
 }
 
 test "string literal with four-byte Unicode escape" {
     const source_text = "\"\\u{1F680}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
@@ -1386,8 +1436,8 @@ test "string literal with four-byte Unicode escape" {
 
 test "character literal with Unicode escape" {
     const source_text = "'\\u{00E9}'";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
@@ -1396,8 +1446,8 @@ test "character literal with Unicode escape" {
 
 test "character literal with four-byte Unicode escape" {
     const source_text = "'\\u{1F680}'";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
@@ -1406,8 +1456,8 @@ test "character literal with four-byte Unicode escape" {
 
 test "Unicode escape accepts uppercase hexadecimal digits" {
     const source_text = "\"\\u{1F4A9}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
@@ -1415,8 +1465,8 @@ test "Unicode escape accepts uppercase hexadecimal digits" {
 
 test "Unicode escape accepts one hexadecimal digit" {
     const source_text = "\"\\u{A}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .token);
@@ -1424,8 +1474,8 @@ test "Unicode escape accepts one hexadecimal digit" {
 
 test "Unicode escape rejects missing opening brace" {
     const source_text = "\"\\u1234\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1437,8 +1487,8 @@ test "Unicode escape rejects missing opening brace" {
 
 test "Unicode escape rejects empty braces" {
     const source_text = "\"\\u{}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1450,8 +1500,8 @@ test "Unicode escape rejects empty braces" {
 
 test "Unicode escape rejects missing closing brace" {
     const source_text = "\"\\u{1234\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1463,8 +1513,8 @@ test "Unicode escape rejects missing closing brace" {
 
 test "Unicode escape rejects non-hexadecimal digits" {
     const source_text = "\"\\u{12G4}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1476,8 +1526,8 @@ test "Unicode escape rejects non-hexadecimal digits" {
 
 test "Unicode escape rejects more than six hexadecimal digits" {
     const source_text = "\"\\u{1234567}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1489,8 +1539,8 @@ test "Unicode escape rejects more than six hexadecimal digits" {
 
 test "Unicode escape rejects code points above Unicode range" {
     const source_text = "\"\\u{110000}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1502,8 +1552,8 @@ test "Unicode escape rejects code points above Unicode range" {
 
 test "Unicode escape rejects surrogate code points" {
     const source_text = "\"\\u{D800}\"";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1515,8 +1565,8 @@ test "Unicode escape rejects surrogate code points" {
 
 test "character literal with multiple characters reports one diagnostic and recovers" {
     const source_text = "'ab' foo";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1531,13 +1581,13 @@ test "character literal with multiple characters reports one diagnostic and reco
 
     try std.testing.expect(next == .token);
     try std.testing.expectEqual(TokenKind.identifier, next.token.kind);
-    try std.testing.expectEqualStrings("foo", next.token.lexeme(source_text));
+    try std.testing.expectEqualStrings("foo", next.token.lexeme(source.text));
 }
 
 test "trailing decimal point diagnostic span" {
     const source_text = "12.";
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
-
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
@@ -1555,7 +1605,7 @@ test "lexes mixed source input" {
         \\    /// Documentation comment
         \\}
     ;
-
+    const source = makeSource(source_text);
     const ExpectedToken = struct {
         kind: TokenKind,
         lexeme: []const u8,
@@ -1593,7 +1643,7 @@ test "lexes mixed source input" {
         .{ .kind = .eof, .lexeme = "" },
     };
 
-    var lexer = Lexer.init(.{ .value = 1 }, source_text);
+    var lexer = Lexer.init(&source);
     var position: usize = 0;
 
     for (expected) |expected_token| {
@@ -1603,7 +1653,7 @@ test "lexes mixed source input" {
         try std.testing.expectEqual(expected_token.kind, result.token.kind);
         try std.testing.expectEqualStrings(
             expected_token.lexeme,
-            result.token.lexeme(source_text),
+            result.token.lexeme(source.text),
         );
 
         if (expected_token.kind == .eof) {
@@ -1612,7 +1662,7 @@ test "lexes mixed source input" {
         } else {
             const offset = std.mem.indexOfPos(
                 u8,
-                source_text,
+                source.text,
                 position,
                 expected_token.lexeme,
             ) orelse return error.ExpectedTokenNotFound;
@@ -1638,12 +1688,13 @@ test "lexes hexadecimal integers" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         const result = lexer.nextToken();
 
         try std.testing.expect(result == .token);
         try std.testing.expectEqual(TokenKind.hex_integer, result.token.kind);
-        try std.testing.expectEqualStrings(source_text, result.token.lexeme(source_text));
+        try std.testing.expectEqualStrings(source.text, result.token.lexeme(source.text));
     }
 }
 
@@ -1658,12 +1709,13 @@ test "lexes binary integers" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         const result = lexer.nextToken();
 
         try std.testing.expect(result == .token);
         try std.testing.expectEqual(TokenKind.binary_integer, result.token.kind);
-        try std.testing.expectEqualStrings(source_text, result.token.lexeme(source_text));
+        try std.testing.expectEqualStrings(source.text, result.token.lexeme(source.text));
     }
 }
 
@@ -1680,12 +1732,13 @@ test "lexes exponent floating-point literals" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         const result = lexer.nextToken();
 
         try std.testing.expect(result == .token);
         try std.testing.expectEqual(TokenKind.exponent_float, result.token.kind);
-        try std.testing.expectEqualStrings(source_text, result.token.lexeme(source_text));
+        try std.testing.expectEqualStrings(source.text, result.token.lexeme(source.text));
     }
 }
 
@@ -1700,7 +1753,8 @@ test "rejects malformed hexadecimal integers" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         try std.testing.expect(lexer.nextToken() == .diagnostic);
     }
 }
@@ -1716,7 +1770,8 @@ test "rejects malformed binary integers" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         try std.testing.expect(lexer.nextToken() == .diagnostic);
     }
 }
@@ -1732,48 +1787,61 @@ test "rejects malformed exponents" {
     };
 
     for (cases) |source_text| {
-        var lexer = Lexer.init(.{ .value = 1 }, source_text);
+        const source = makeSource(source_text);
+        var lexer = Lexer.init(&source);
         try std.testing.expect(lexer.nextToken() == .diagnostic);
     }
 }
 
 test "reject unknown string escape" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"hello\\q\"");
+    const source_text = "\"hello\\q\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject trailing string escape" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"hello\\");
+    const source_text = "\"hello\\";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject unknown character escape" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'\\q'");
+    const source_text = "'\\q'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject trailing character escape" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'\\");
+    const source_text = "'\\";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject malformed Unicode escape in string" {
-    var lexer = Lexer.init(.{ .value = 1 }, "\"\\u{}\"");
+    const source_text = "\"\\u{}\"";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
 }
 
 test "reject malformed Unicode escape in character literal" {
-    var lexer = Lexer.init(.{ .value = 1 }, "'\\u{}'");
+    const source_text = "'\\u{}'";
+    const source = makeSource(source_text);
+    var lexer = Lexer.init(&source);
     const result = lexer.nextToken();
 
     try std.testing.expect(result == .diagnostic);
