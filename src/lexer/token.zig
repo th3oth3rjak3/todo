@@ -15,6 +15,8 @@ pub const TokenKind = enum {
 
     keyword_pub,
     keyword_record,
+    keyword_true,
+    keyword_false,
 
     left_brace,
     right_brace,

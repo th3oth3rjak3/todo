@@ -1636,7 +1636,7 @@ test "lexes mixed source input" {
         .{ .kind = .colon, .lexeme = ":" },
         .{ .kind = .identifier, .lexeme = "bool" },
         .{ .kind = .equal, .lexeme = "=" },
-        .{ .kind = .identifier, .lexeme = "true" },
+        .{ .kind = .keyword_true, .lexeme = "true" },
         .{ .kind = .semicolon, .lexeme = ";" },
         .{ .kind = .doc_comment, .lexeme = "/// Documentation comment" },
         .{ .kind = .right_brace, .lexeme = "}" },
