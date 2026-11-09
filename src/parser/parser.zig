@@ -48,7 +48,7 @@ pub const Parser = struct {
         const expr = self.parseExpression() catch |err| switch (err) {
             error.ExpectedExpression => {
                 return .{
-                    .diagnostic = try self.makeExpectedExpressionDiagnostic(),
+                    .diagnostic = self.makeExpectedExpressionDiagnostic(),
                 };
             },
             error.OutOfMemory => return error.OutOfMemory,
@@ -267,7 +267,7 @@ pub const Parser = struct {
         return self.tokens[self.cursor - 1];
     }
 
-    fn makeExpectedExpressionDiagnostic(self: *Self) !Diagnostic {
+    fn makeExpectedExpressionDiagnostic(self: *Self) Diagnostic {
         const token = self.peek();
 
         return Diagnostic{
